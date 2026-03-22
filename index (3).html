@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EvalPro | Feria de Ciencias Chaco 2025</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *{font-family:'Inter',sans-serif;box-sizing:border-box;}
+    body{margin:0;background:#020617;}
+    textarea,input{font-family:'Inter',sans-serif;}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .pulse{animation:pulse 2s infinite;}
+    .spin{animation:spin 1s linear infinite;}
+    .upload-zone:hover{border-color:#ef4444!important;background:rgba(220,38,38,0.05)!important;}
+    .escala-btn{transition:all .15s;cursor:pointer;border:none;font-weight:900;font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:.5rem .75rem;border-radius:8px;flex:1;}
+    .field-input{background:transparent;border:none;border-bottom:1px solid #555;outline:none;width:100%;padding:2px 4px;font-size:12px;color:#111;}
+    .field-input::placeholder{color:#aaa;}
+    .ai-btn{cursor:pointer;font-weight:900;font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:.5rem 1rem;border-radius:10px;background:rgba(99,102,241,.2);color:#a5b4fc;border:1px solid rgba(99,102,241,.3);transition:all .2s;display:inline-flex;align-items:center;gap:.4rem;}
+    .ai-btn:hover{background:rgba(99,102,241,.35);}
+    @media print{
+      body *{visibility:hidden;}
+      #ficha-imprimible,#ficha-imprimible *{visibility:visible;}
+      #ficha-imprimible{position:fixed;left:0;top:0;width:100%;padding:20px;background:white!important;color:black!important;}
+      .no-print{display:none!important;}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef } = React;
+
+const LogoE = () => (
+  <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+    <rect width="34" height="34" rx="9" fill="#dc2626"/>
+    <text x="6" y="26" fontSize="23" fontWeight="900" fill="white" fontStyle="italic">E</text>
+    <rect x="6" y="28" width="21" height="2.5" rx="1.25" fill="#fca5a5"/>
+  </svg>
+);
+
+const ESCALA = ['Excelente','Bueno','Regular'];
+const EC = {'Excelente':'#22c55e','Bueno':'#f59e0b','Regular':'#ef4444'};
+const EB = {'Excelente':'rgba(34,197,94,.15)','Bueno':'rgba(245,158,11,.15)','Regular':'rgba(239,68,68,.15)'};
+
+// ── API Gemini directo ────────────────────────────────────────
+const GEMINI_KEY = 'AIzaSyBGqP-INtHWil1RoZPMfbHSrJOAMdqyu1g';
+
+const callClaude = async (messages, maxTokens = 1500) => {
+  let parts = [];
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      parts.push({ text: msg.content });
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === 'text') parts.push({ text: block.text });
+        else if (block.type === 'document' && block.source?.type === 'base64') {
+          parts.push({ inlineData: { mimeType: block.source.media_type, data: block.source.data } });
+        }
+      }
+    }
+  }
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.3 }
+      })
+    }
+  );
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+};
+
+const parseJSON = (text) => {
+  try { return JSON.parse(text.replace(/```json|```/g,'').trim()); }
+  catch { return null; }
+};
+
+const fileToBase64 = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = rej;
+  r.readAsDataURL(file);
+});
+
+const Badge = ({ label }) => {
+  const color = label==='Excelente'?'#22c55e':label==='Bueno'?'#f59e0b':'#ef4444';
+  const bg = label==='Excelente'?'rgba(34,197,94,.15)':label==='Bueno'?'rgba(245,158,11,.15)':'rgba(239,68,68,.15)';
+  return <span style={{fontSize:'11px',fontWeight:900,color,background:bg,padding:'3px 12px',borderRadius:'999px',textTransform:'uppercase'}}>{label}</span>;
+};
+
+const Spinner = () => (
+  <svg className="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="2.5" strokeLinecap="round">
+    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+  </svg>
+);
+
+const AIResult = ({ result, loading }) => {
+  if (loading) return (
+    <div style={{marginTop:'1rem',background:'rgba(99,102,241,.08)',border:'1px solid rgba(99,102,241,.3)',borderRadius:'16px',padding:'1.25rem',textAlign:'center'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:'.75rem'}}>
+        <Spinner/><div style={{fontSize:'12px',fontWeight:700,color:'#a5b4fc'}}>Analizando con IA...</div>
+      </div>
+      <div style={{fontSize:'11px',color:'#64748b',marginTop:'6px'}}>Esto puede demorar unos segundos</div>
+    </div>
+  );
+  if (!result) return null;
+  if (result.error) return (
+    <div style={{marginTop:'1rem',background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.3)',borderRadius:'14px',padding:'1rem'}}>
+      <div style={{fontSize:'11px',color:'#f87171'}}>⚠️ {result.error}</div>
+    </div>
+  );
+  const items = result.items || [];
+  return (
+    <div style={{marginTop:'1rem',background:'rgba(99,102,241,.05)',border:'1px solid rgba(99,102,241,.25)',borderRadius:'16px',padding:'1.5rem',display:'flex',flexDirection:'column',gap:'1rem'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'.5rem'}}>
+        <div style={{fontSize:'11px',fontWeight:900,color:'#a5b4fc',textTransform:'uppercase',letterSpacing:'.1em'}}>🤖 Análisis IA</div>
+        {result.puntaje && <Badge label={result.puntaje}/>}
+      </div>
+      {items.length > 0 && (
+        <div style={{display:'flex',flexDirection:'column',gap:'.5rem'}}>
+          {items.map((s,i) => {
+            const ok = s.estado==='Bien'||s.estado==='Excelente';
+            const warn = s.estado==='Incompleto'||s.estado==='Bueno';
+            const icon = ok?'✅':warn?'⚠️':'❌';
+            const color = ok?'#22c55e':warn?'#f59e0b':'#ef4444';
+            return (
+              <div key={i} style={{background:'rgba(15,23,42,.6)',borderRadius:'10px',padding:'.75rem 1rem',border:`1px solid ${color}30`}}>
+                <div style={{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:s.comentario?'4px':0}}>
+                  <span style={{fontSize:'13px'}}>{icon}</span>
+                  <span style={{fontSize:'11px',fontWeight:900,color:'white',textTransform:'uppercase',flex:1}}>{s.nombre}</span>
+                  <span style={{fontSize:'10px',fontWeight:700,color}}>{s.estado}</span>
+                </div>
+                {s.comentario && <div style={{fontSize:'11px',color:'#94a3b8',paddingLeft:'1.5rem',lineHeight:1.5}}>{s.comentario}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {result.conclusion && (
+        <div style={{background:'rgba(99,102,241,.1)',borderRadius:'12px',padding:'1rem',borderLeft:'3px solid #6366f1'}}>
+          <div style={{fontSize:'10px',fontWeight:900,color:'#6366f1',textTransform:'uppercase',marginBottom:'.4rem'}}>📝 Conclusión del evaluador</div>
+          <div style={{fontSize:'12px',color:'#cbd5e1',lineHeight:1.6}}>{result.conclusion}</div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const App = () => {
+  const [activeTab, setActiveTab] = useState('video');
+  const [notes, setNotes] = useState({video:'',informe:'',carpeta:'',registro:'',expositores:'',inn:''});
+  const [carpetaChecks, setCarpetaChecks] = useState({autoria:false,recorrido:false,resultados:false});
+  const [innValues, setInnValues] = useState({Creatividad:0,Impacto:0,Contexto:0,Tecnología:0,STEAM:0});
+  const [adjuntos, setAdjuntos] = useState({video:[],informe:[],carpeta:[],registro:[],expositores:[]});
+  const [youtubeLink, setYoutubeLink] = useState('');
+  const [videoNoTiene, setVideoNoTiene] = useState(false);
+  const [expScores, setExpScores] = useState({'Claridad Expositiva':'','Lenguaje Técnico':'','Manejo de Contenido':'','Ubicación de la Información':'','Prolijidad':'','Información Brindada':''});
+  const [aiResults, setAiResults] = useState({video:null,informe:null,carpeta:null,registro:null,expositores:null,inn:null,devolucion:null});
+  const [loading, setLoading] = useState({video:false,informe:false,carpeta:false,registro:false,expositores:false,inn:false,devolucion:false});
+  const [ficha, setFicha] = useState({titulo:'',institucion:'',codigo:'',localidad:'',expositor1:'',expositor2:'',docente:'',fecha:'',ev1n:'',ev1a:'',ev2n:'',ev2a:'',ev3n:'',ev3a:'',comentarios:''});
+
+  const fRefs = {video:useRef(null),informe:useRef(null),registro:useRef(null),otros:useRef(null)};
+  const totalINN = Object.values(innValues).reduce((a,b)=>a+(parseInt(b)||0),0);
+  const expCompletos = Object.values(expScores).filter(v=>v!=='').length;
+  const setLoad = (tab,val) => setLoading(p=>({...p,[tab]:val}));
+  const setResult = (tab,val) => setAiResults(p=>({...p,[tab]:val}));
+  const handleFicha = (f,v) => setFicha(p=>({...p,[f]:v}));
+  const getYTId = (url) => { const m=url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/); return m?m[1]:null; };
+
+  const analizar = async (tab, file=null) => {
+    if (loading[tab]) return;
+    setLoad(tab,true); setResult(tab,null);
+    try {
+      let text = '';
+
+      if (tab==='video') {
+        const prompt = `Sos evaluador de la Feria de Ciencias de Chaco. Evaluá la situación del video:
+- Link YouTube: ${youtubeLink||'No proporcionado'}
+- Video subido: ${adjuntos.video.length>0?'Sí':'No'}
+- Sin video: ${videoNoTiene?'Sí':'No'}
+- Notas: ${notes.video||'Ninguna'}
+Respondé SOLO en JSON sin markdown: {"items":[{"nombre":"Disponibilidad","estado":"Bien/Incompleto/Ausente","comentario":"..."},{"nombre":"Accesibilidad","estado":"...","comentario":"..."}],"conclusion":"...","puntaje":"Excelente/Bueno/Regular"}`;
+        text = await callClaude([{role:'user',content:prompt}]);
+      }
+
+      else if (tab==='informe'||tab==='registro') {
+        const archivo = file || adjuntos[tab][0]?.raw;
+        if (!archivo) { setResult(tab,{error:'Primero subí un documento para analizar.'}); setLoad(tab,false); return; }
+        const b64 = await fileToBase64(archivo);
+        const isPDF = archivo.type==='application/pdf';
+        const pInforme = `Sos evaluador experto de la Feria de Ciencias de Chaco. Analizá este informe y evaluá si contiene: Resumen, Introducción, Marco Teórico, Hipótesis/Objetivos, Metodología, Desarrollo/Resultados, Conclusiones, Bibliografía. Respondé SOLO en JSON sin markdown: {"items":[{"nombre":"Resumen","estado":"Bien/Incompleto/Ausente","comentario":"..."}],"conclusion":"Conclusión como evaluador","puntaje":"Excelente/Bueno/Regular"}`;
+        const pRegistro = `Sos evaluador experto de la Feria de Ciencias de Chaco. Analizá este Registro Pedagógico y evaluá: Proceso de aprendizaje, Participación docente, Planificación, Etapas del proyecto, Reflexiones pedagógicas, Vinculación curricular. Respondé SOLO en JSON sin markdown: {"items":[{"nombre":"Proceso de aprendizaje","estado":"Bien/Incompleto/Ausente","comentario":"..."}],"conclusion":"...","puntaje":"Excelente/Bueno/Regular"}`;
+        const prompt = tab==='informe'?pInforme:pRegistro;
+        if (isPDF) {
+          text = await callClaude([{role:'user',content:[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:prompt}]}]);
+        } else {
+          text = await callClaude([{role:'user',content:prompt+'\n\nNota: archivo Word, analizá lo que puedas.'}]);
+        }
+      }
+
+      else if (tab==='carpeta') {
+        const prompt = `Sos evaluador de la Feria de Ciencias de Chaco. Evaluá la Carpeta de Campo:
+- Autoría Colectiva: ${carpetaChecks.autoria?'✅':'❌'}
+- Recorrido del Proyecto: ${carpetaChecks.recorrido?'✅':'❌'}
+- Resultados: ${carpetaChecks.resultados?'✅':'❌'}
+- Archivos: ${adjuntos.carpeta.length>0?adjuntos.carpeta.map(a=>a.name).join(', '):'Ninguno'}
+- Notas: ${notes.carpeta||'Ninguna'}
+Respondé SOLO en JSON: {"items":[{"nombre":"Autoría Colectiva","estado":"Bien/Incompleto/Ausente","comentario":"..."},{"nombre":"Recorrido","estado":"...","comentario":"..."},{"nombre":"Resultados","estado":"...","comentario":"..."}],"conclusion":"...","puntaje":"Excelente/Bueno/Regular"}`;
+        text = await callClaude([{role:'user',content:prompt}]);
+      }
+
+      else if (tab==='expositores') {
+        const criterios = Object.entries(expScores).map(([k,v])=>`${k}: ${v||'Sin evaluar'}`).join('\n');
+        const prompt = `Sos evaluador de la Feria de Ciencias de Chaco. Evaluá los expositores/stand:
+${criterios}
+Notas: ${notes.expositores||'Ninguna'}
+Respondé SOLO en JSON: {"items":[{"nombre":"Claridad Expositiva","estado":"${expScores['Claridad Expositiva']||'Sin evaluar'}","comentario":"..."},{"nombre":"Lenguaje Técnico","estado":"${expScores['Lenguaje Técnico']||'Sin evaluar'}","comentario":"..."},{"nombre":"Manejo de Contenido","estado":"${expScores['Manejo de Contenido']||'Sin evaluar'}","comentario":"..."},{"nombre":"Ubicación de la Información","estado":"${expScores['Ubicación de la Información']||'Sin evaluar'}","comentario":"..."},{"nombre":"Prolijidad","estado":"${expScores['Prolijidad']||'Sin evaluar'}","comentario":"..."},{"nombre":"Información Brindada","estado":"${expScores['Información Brindada']||'Sin evaluar'}","comentario":"..."}],"conclusion":"...","puntaje":"Excelente/Bueno/Regular"}`;
+        text = await callClaude([{role:'user',content:prompt}]);
+      }
+
+      else if (tab==='inn') {
+        const criterios = Object.entries(innValues).map(([k,v])=>`${k}: ${v} puntos`).join('\n');
+        const prompt = `Sos evaluador de la Feria de Ciencias de Chaco. Evaluá la Innovación:
+${criterios}
+Total: ${totalINN} puntos
+Notas: ${notes.inn||'Ninguna'}
+Respondé SOLO en JSON: {"items":[{"nombre":"Creatividad","estado":"Bien/Incompleto/Bajo","comentario":"..."},{"nombre":"Impacto","estado":"...","comentario":"..."},{"nombre":"Contexto","estado":"...","comentario":"..."},{"nombre":"Tecnología","estado":"...","comentario":"..."},{"nombre":"STEAM","estado":"...","comentario":"..."}],"conclusion":"...","puntaje":"Excelente/Bueno/Regular"}`;
+        text = await callClaude([{role:'user',content:prompt}]);
+      }
+
+      const parsed = parseJSON(text);
+      setResult(tab, parsed||{error:'No se pudo interpretar la respuesta. Intentá de nuevo.'});
+    } catch(err) {
+      setResult(tab, {error:'Error al conectar con la IA: '+err.message});
+    }
+    setLoad(tab,false);
+  };
+
+  const generarDevolucion = async () => {
+    setLoad('devolucion',true); setResult('devolucion',null);
+    try {
+      const prompt = `Sos evaluador experto de la Feria de Ciencias de Chaco. Generá una devolución final completa basada en toda la evaluación:
+
+PROYECTO: "${ficha.titulo||'Sin título'}" — ${ficha.institucion||'Sin institución'}
+EXPOSITORES: ${ficha.expositor1||''} / ${ficha.expositor2||''}
+
+VIDEO: ${videoNoTiene?'No tiene video':youtubeLink?'Tiene YouTube':adjuntos.video.length>0?'Video subido':'Sin video'}
+Análisis video: ${aiResults.video?.conclusion||'No analizado'}
+
+INFORME: ${adjuntos.informe.length>0?'Subido':'Sin documento'} | Puntaje: ${aiResults.informe?.puntaje||'-'}
+Análisis: ${aiResults.informe?.conclusion||'No analizado'}
+
+CARPETA: Autoría ${carpetaChecks.autoria?'✅':'❌'} | Recorrido ${carpetaChecks.recorrido?'✅':'❌'} | Resultados ${carpetaChecks.resultados?'✅':'❌'}
+Análisis: ${aiResults.carpeta?.conclusion||'No analizado'}
+
+REGISTRO PEDAGÓGICO: ${adjuntos.registro.length>0?'Subido':'Sin documento'} | Puntaje: ${aiResults.registro?.puntaje||'-'}
+Análisis: ${aiResults.registro?.conclusion||'No analizado'}
+
+EXPOSITORES/STAND: ${Object.entries(expScores).map(([k,v])=>`${k}:${v||'-'}`).join(' | ')}
+Análisis: ${aiResults.expositores?.conclusion||'No analizado'} | Puntaje: ${aiResults.expositores?.puntaje||'-'}
+
+INNOVACIÓN: Total ${totalINN} pts | ${Object.entries(innValues).map(([k,v])=>`${k}:${v}`).join(' | ')}
+Análisis: ${aiResults.inn?.conclusion||'No analizado'} | Puntaje: ${aiResults.inn?.puntaje||'-'}
+
+Generá una devolución profesional, constructiva y motivadora. Respondé SOLO en JSON:
+{"fortalezas":"...","mejoras":"...","conclusion":"...","puntaje_global":"Excelente/Bueno/Regular"}`;
+
+      const text = await callClaude([{role:'user',content:prompt}], 2000);
+      const parsed = parseJSON(text);
+      if (parsed) {
+        setResult('devolucion', parsed);
+        handleFicha('comentarios', `FORTALEZAS:\n${parsed.fortalezas}\n\nASPECTOS A MEJORAR:\n${parsed.mejoras}\n\nCONCLUSIÓN:\n${parsed.conclusion}`);
+      } else {
+        setResult('devolucion', {error:'No se pudo generar. Intentá de nuevo.'});
+      }
+    } catch(err) {
+      setResult('devolucion', {error:'Error: '+err.message});
+    }
+    setLoad('devolucion',false);
+  };
+
+  const handleFile = (tab) => (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    const nuevos = files.map(f=>({name:f.name,size:(f.size/1024).toFixed(1)+' KB',type:f.type,url:URL.createObjectURL(f),isVideo:f.type.startsWith('video/'),isImage:f.type.startsWith('image/'),raw:f}));
+    setAdjuntos(p=>({...p,[tab]:[...p[tab],...nuevos]}));
+    if ((tab==='informe'||tab==='registro') && files[0]) analizar(tab, files[0]);
+    e.target.value='';
+  };
+
+  const handleDrop = (tab) => (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files);
+    const nuevos = files.map(f=>({name:f.name,size:(f.size/1024).toFixed(1)+' KB',type:f.type,url:URL.createObjectURL(f),isVideo:f.type.startsWith('video/'),isImage:f.type.startsWith('image/'),raw:f}));
+    setAdjuntos(p=>({...p,[tab]:[...p[tab],...nuevos]}));
+    if ((tab==='informe'||tab==='registro') && files[0]) analizar(tab, files[0]);
+  };
+
+  const eliminar = (tab,idx) => setAdjuntos(p=>({...p,[tab]:p[tab].filter((_,i)=>i!==idx)}));
+
+  const tabs = [
+    {id:'video',label:'Video',emoji:'▶️'},
+    {id:'informe',label:'Informe Proyecto',emoji:'📄'},
+    {id:'carpeta',label:'Carpeta Campo',emoji:'📋'},
+    {id:'registro',label:'Registro Pedag.',emoji:'📖'},
+    {id:'expositores',label:'Expositores/Stand',emoji:'👥'},
+    {id:'inn',label:'Innovación (INN)',emoji:'⚡'},
+    {id:'devolucion',label:'DEVOLUCIÓN FINAL',emoji:'✉️'},
+  ];
+
+  const Notes = ({tab}) => (
+    <div style={{marginTop:'1.5rem',borderTop:'1px solid #1e293b',paddingTop:'1.5rem'}}>
+      <div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:'.75rem'}}>💬 Notas del evaluador</div>
+      <textarea value={notes[tab]||''} onChange={e=>setNotes(p=>({...p,[tab]:e.target.value}))} placeholder="Apuntes rápidos..."
+        style={{width:'100%',height:'80px',background:'#020617',border:'1px solid #1e293b',borderRadius:'12px',padding:'1rem',fontSize:'12px',color:'#cbd5e1',outline:'none',resize:'vertical',fontStyle:'italic'}}/>
+    </div>
+  );
+
+  const AIBtn = ({tab, file, label='🤖 Analizar con IA'}) => (
+    <button className="ai-btn" onClick={()=>analizar(tab,file)} disabled={loading[tab]} style={{marginTop:'1rem'}}>
+      {loading[tab]?<Spinner/>:'🤖'} {loading[tab]?'Analizando...':label}
+    </button>
+  );
+
+  const DocList = ({tab}) => {
+    const lista = adjuntos[tab]||[];
+    if (!lista.length) return null;
+    return (
+      <div style={{display:'flex',flexDirection:'column',gap:'.5rem',marginTop:'.5rem'}}>
+        {lista.map((a,i)=>(
+          <div key={i} style={{background:'rgba(15,23,42,.8)',border:'1px solid #1e293b',borderRadius:'12px',padding:'.875rem',display:'flex',gap:'1rem',alignItems:'center'}}>
+            <div style={{width:'40px',height:'40px',background:a.name.endsWith('.pdf')?'rgba(220,38,38,.2)':'rgba(37,99,235,.2)',borderRadius:'8px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.25rem',flexShrink:0}}>
+              {a.name.endsWith('.pdf')?'📄':'📝'}
+            </div>
+            <div style={{flex:1}}><div style={{fontSize:'12px',fontWeight:700,color:'white',wordBreak:'break-all'}}>{a.name}</div><div style={{fontSize:'10px',color:'#64748b'}}>{a.size}</div></div>
+            <button onClick={()=>analizar(tab,a.raw)} className="ai-btn" style={{whiteSpace:'nowrap',marginTop:0}}>{loading[tab]?<Spinner/>:'🤖'} Re-analizar</button>
+            <button onClick={()=>eliminar(tab,i)} style={{background:'rgba(220,38,38,.15)',color:'#f87171',border:'1px solid rgba(220,38,38,.3)',borderRadius:'8px',padding:'.4rem .75rem',fontSize:'11px',fontWeight:900,cursor:'pointer'}}>✕</button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{minHeight:'100vh',background:'#020617',color:'#e2e8f0'}}>
+      <header style={{background:'rgba(15,23,42,.97)',borderBottom:'1px solid #1e293b',padding:'1rem 1.5rem',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,zIndex:50}}>
+        <div style={{display:'flex',alignItems:'center',gap:'1rem'}}>
+          <LogoE/>
+          <div>
+            <div style={{fontSize:'16px',fontWeight:900,color:'white',textTransform:'uppercase',letterSpacing:'.2em',fontStyle:'italic'}}>EvalPro</div>
+            <div style={{fontSize:'10px',color:'#f87171',fontWeight:700,textTransform:'uppercase'}}>Feria de Ciencias · Chaco 2025</div>
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'.5rem'}}>
+          <div className="pulse" style={{width:8,height:8,borderRadius:'50%',background:'#22c55e'}}/>
+          <span style={{fontSize:'10px',fontWeight:700,color:'#94a3b8',textTransform:'uppercase'}}>Sesión Activa</span>
+        </div>
+      </header>
+
+      <div style={{maxWidth:'1200px',margin:'0 auto',padding:'1.5rem',display:'flex',gap:'1.5rem',flexWrap:'wrap'}}>
+        {/* NAV */}
+        <div style={{display:'flex',flexDirection:'column',gap:'.5rem',width:'220px',flexShrink:0}}>
+          {tabs.map(tab=>(
+            <button key={tab.id} onClick={()=>setActiveTab(tab.id)} style={{
+              display:'flex',alignItems:'center',gap:'.75rem',padding:'.875rem 1.25rem',borderRadius:'16px',cursor:'pointer',
+              border:activeTab===tab.id?'1px solid #ef4444':tab.id==='devolucion'?'1px solid rgba(99,102,241,.4)':'1px solid #1e293b',
+              background:activeTab===tab.id?'#dc2626':tab.id==='devolucion'?'rgba(49,46,129,.2)':'rgba(15,23,42,.6)',
+              color:activeTab===tab.id?'white':tab.id==='devolucion'?'#a5b4fc':'#94a3b8',
+              transition:'all .2s',textAlign:'left',width:'100%'
+            }}>
+              <span style={{fontSize:'14px'}}>{tab.emoji}</span>
+              <span style={{fontSize:'10px',fontWeight:900,textTransform:'uppercase',letterSpacing:'.08em',flex:1}}>{tab.label}</span>
+              {aiResults[tab.id]&&!aiResults[tab.id].error&&(
+                <span style={{fontSize:'9px',background:'rgba(99,102,241,.3)',color:'#a5b4fc',borderRadius:'999px',padding:'1px 6px',fontWeight:900}}>IA✓</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* CONTENT */}
+        <div style={{flex:1,minWidth:'280px'}}>
+          <div style={{background:'#0f172a',borderRadius:'24px',border:'1px solid #1e293b',padding:'2rem',minHeight:'600px',display:'flex',flexDirection:'column',boxShadow:'0 25px 50px rgba(0,0,0,.5)'}}>
+
+            {/* VIDEO */}
+            {activeTab==='video'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+                <div><div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.2em'}}>Sección 1</div>
+                <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Video del Proyecto</h2></div>
+                <div style={{background:'rgba(15,23,42,.6)',border:'1px solid #1e293b',borderRadius:'16px',padding:'1.25rem'}}>
+                  <div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',marginBottom:'.75rem'}}>📺 Opción 1 — Link de YouTube</div>
+                  <div style={{display:'flex',gap:'.5rem'}}>
+                    <input type="text" value={youtubeLink} onChange={e=>{setYoutubeLink(e.target.value);setVideoNoTiene(false);}} placeholder="https://www.youtube.com/watch?v=..."
+                      style={{flex:1,background:'#020617',border:'1px solid #334155',borderRadius:'10px',padding:'.625rem 1rem',fontSize:'12px',color:'#cbd5e1',outline:'none'}}/>
+                    {youtubeLink&&<button onClick={()=>setYoutubeLink('')} style={{background:'rgba(220,38,38,.15)',color:'#f87171',border:'1px solid rgba(220,38,38,.3)',borderRadius:'10px',padding:'.5rem .875rem',fontSize:'11px',fontWeight:900,cursor:'pointer'}}>✕</button>}
+                  </div>
+                  {getYTId(youtubeLink)&&(
+                    <div style={{marginTop:'.75rem',borderRadius:'12px',overflow:'hidden'}}>
+                      <iframe width="100%" height="200" src={`https://www.youtube.com/embed/${getYTId(youtubeLink)}`} frameBorder="0" allowFullScreen style={{display:'block'}}/>
+                    </div>
+                  )}
+                  {youtubeLink&&!getYTId(youtubeLink)&&<div style={{marginTop:'.5rem',fontSize:'11px',color:'#f59e0b'}}>⚠️ Link no reconocido.</div>}
+                </div>
+                <div style={{background:'rgba(15,23,42,.6)',border:'1px solid #1e293b',borderRadius:'16px',padding:'1.25rem'}}>
+                  <div style={{fontSize:'10px',fontWeight:900,color:'#38bdf8',textTransform:'uppercase',marginBottom:'.75rem'}}>📱 Opción 2 — Cargar desde dispositivo</div>
+                  <div className="upload-zone" onDrop={handleDrop('video')} onDragOver={e=>e.preventDefault()} onClick={()=>{setVideoNoTiene(false);fRefs.video.current.click();}}
+                    style={{border:'2px dashed #334155',borderRadius:'14px',background:'rgba(2,6,23,.4)',padding:'1.25rem',textAlign:'center',cursor:'pointer',transition:'all .2s'}}>
+                    <div style={{fontSize:'1.5rem',marginBottom:'.4rem'}}>🎬</div>
+                    <div style={{fontSize:'11px',color:'#94a3b8',marginBottom:'.75rem'}}>Arrastrá o hacé clic</div>
+                    <button onClick={e=>{e.stopPropagation();setVideoNoTiene(false);fRefs.video.current.click();}} style={{background:'#38bdf8',color:'#020617',fontSize:'10px',fontWeight:900,textTransform:'uppercase',padding:'.5rem 1.25rem',borderRadius:'10px',border:'none',cursor:'pointer'}}>📁 Seleccionar</button>
+                    <input ref={fRefs.video} type="file" accept="video/*" onChange={handleFile('video')} style={{display:'none'}}/>
+                  </div>
+                  {adjuntos.video.map((a,i)=>(
+                    <div key={i} style={{marginTop:'.75rem',background:'rgba(15,23,42,.8)',border:'1px solid #1e293b',borderRadius:'12px',padding:'.75rem',display:'flex',gap:'1rem',alignItems:'flex-start'}}>
+                      <video src={a.url} controls style={{width:'140px',height:'80px',borderRadius:'8px',flexShrink:0}}/>
+                      <div style={{flex:1}}><div style={{fontSize:'12px',fontWeight:700,color:'white',wordBreak:'break-all'}}>{a.name}</div><div style={{fontSize:'10px',color:'#64748b'}}>{a.size}</div></div>
+                      <button onClick={()=>eliminar('video',i)} style={{background:'rgba(220,38,38,.15)',color:'#f87171',border:'1px solid rgba(220,38,38,.3)',borderRadius:'8px',padding:'.4rem .75rem',fontSize:'11px',fontWeight:900,cursor:'pointer'}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div onClick={()=>{setVideoNoTiene(!videoNoTiene);setYoutubeLink('');setAdjuntos(p=>({...p,video:[]}));}}
+                  style={{cursor:'pointer',display:'flex',alignItems:'center',gap:'1rem',padding:'1rem 1.25rem',borderRadius:'14px',transition:'all .2s',
+                    border:videoNoTiene?'2px solid #f59e0b':'2px solid #1e293b',background:videoNoTiene?'rgba(245,158,11,.08)':'rgba(15,23,42,.4)'}}>
+                  <span style={{fontSize:'1.5rem'}}>{videoNoTiene?'⚠️':'🚫'}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:'11px',fontWeight:900,color:videoNoTiene?'#f59e0b':'#64748b',textTransform:'uppercase'}}>No tiene / No existe video</div>
+                    <div style={{fontSize:'10px',color:'#475569'}}>El proyecto no cuenta con video</div>
+                  </div>
+                  <span style={{fontSize:'18px'}}>{videoNoTiene?'✅':'⭕'}</span>
+                </div>
+                <Notes tab="video"/><AIBtn tab="video"/><AIResult result={aiResults.video} loading={loading.video}/>
+              </div>
+            )}
+
+            {/* INFORME */}
+            {activeTab==='informe'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+                <div><div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.2em'}}>Sección 2</div>
+                <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Informe del Proyecto</h2></div>
+                <div className="upload-zone" onDrop={handleDrop('informe')} onDragOver={e=>e.preventDefault()} onClick={()=>fRefs.informe.current.click()}
+                  style={{border:'2px dashed #334155',borderRadius:'18px',background:'rgba(2,6,23,.4)',padding:'2rem',textAlign:'center',cursor:'pointer',transition:'all .2s'}}>
+                  <div style={{fontSize:'2rem',marginBottom:'.5rem'}}>📎</div>
+                  <div style={{fontSize:'13px',fontWeight:900,color:'white',marginBottom:'.4rem'}}>Adjuntá el informe del proyecto</div>
+                  <div style={{fontSize:'11px',color:'#64748b',marginBottom:'1rem'}}>PDF o Word — la IA lo analiza automáticamente</div>
+                  <div style={{display:'flex',justifyContent:'center',gap:'.75rem',flexWrap:'wrap'}}>
+                    <button onClick={e=>{e.stopPropagation();fRefs.informe.current.click();}} style={{background:'#dc2626',color:'white',fontSize:'10px',fontWeight:900,textTransform:'uppercase',padding:'.625rem 1.25rem',borderRadius:'10px',border:'none',cursor:'pointer'}}>📄 PDF</button>
+                    <button onClick={e=>{e.stopPropagation();fRefs.informe.current.click();}} style={{background:'#2563eb',color:'white',fontSize:'10px',fontWeight:900,textTransform:'uppercase',padding:'.625rem 1.25rem',borderRadius:'10px',border:'none',cursor:'pointer'}}>📝 Word</button>
+                  </div>
+                  <input ref={fRefs.informe} type="file" accept=".pdf,.doc,.docx" onChange={handleFile('informe')} style={{display:'none'}}/>
+                </div>
+                <DocList tab="informe"/>
+                <Notes tab="informe"/><AIResult result={aiResults.informe} loading={loading.informe}/>
+              </div>
+            )}
+
+            {/* CARPETA */}
+            {activeTab==='carpeta'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+                <div><div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.2em'}}>Sección 3</div>
+                <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Carpeta de Campo</h2></div>
+                {[{id:'autoria',label:'Autoría Colectiva',emoji:'👥',desc:'Participación genuina de los integrantes.'},{id:'recorrido',label:'Recorrido del Proyecto',emoji:'🕐',desc:'Cronología y secuencia lógica.'},{id:'resultados',label:'Resultados',emoji:'📊',desc:'Gráficos, hallazgos y conclusiones.'}].map(item=>(
+                  <div key={item.id} onClick={()=>setCarpetaChecks(p=>({...p,[item.id]:!p[item.id]}))}
+                    style={{cursor:'pointer',display:'flex',alignItems:'center',gap:'1rem',padding:'1.25rem',borderRadius:'20px',transition:'all .2s',
+                      border:carpetaChecks[item.id]?'2px solid #dc2626':'2px solid #1e293b',background:carpetaChecks[item.id]?'rgba(220,38,38,.08)':'rgba(15,23,42,.5)'}}>
+                    <div style={{padding:'.75rem',borderRadius:'10px',fontSize:'20px',background:carpetaChecks[item.id]?'#dc2626':'#1e293b'}}>{item.emoji}</div>
+                    <div style={{flex:1}}><div style={{fontSize:'11px',fontWeight:900,color:'white',textTransform:'uppercase'}}>{item.label}</div><div style={{fontSize:'10px',color:'#64748b'}}>{item.desc}</div></div>
+                    <span style={{fontSize:'20px'}}>{carpetaChecks[item.id]?'✅':'⭕'}</span>
+                  </div>
+                ))}
+                <div className="upload-zone" onDrop={handleDrop('carpeta')} onDragOver={e=>e.preventDefault()} onClick={()=>fRefs.otros.current.click()}
+                  style={{border:'2px dashed #334155',borderRadius:'14px',background:'rgba(2,6,23,.3)',padding:'1rem',textAlign:'center',cursor:'pointer'}}>
+                  <div style={{fontSize:'11px',color:'#64748b',marginBottom:'.5rem'}}>📎 Adjuntá documentos (opcional)</div>
+                  <button onClick={e=>{e.stopPropagation();fRefs.otros.current.click();}} style={{background:'#334155',color:'#94a3b8',fontSize:'10px',fontWeight:900,textTransform:'uppercase',padding:'.5rem 1rem',borderRadius:'8px',border:'none',cursor:'pointer'}}>Adjuntar</button>
+                  <input ref={fRefs.otros} type="file" accept=".pdf,.doc,.docx,image/*" onChange={handleFile('carpeta')} style={{display:'none'}}/>
+                </div>
+                <Notes tab="carpeta"/><AIBtn tab="carpeta"/><AIResult result={aiResults.carpeta} loading={loading.carpeta}/>
+              </div>
+            )}
+
+            {/* REGISTRO */}
+            {activeTab==='registro'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+                <div><div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.2em'}}>Sección 4</div>
+                <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Registro Pedagógico</h2></div>
+                <div className="upload-zone" onDrop={handleDrop('registro')} onDragOver={e=>e.preventDefault()} onClick={()=>fRefs.registro.current.click()}
+                  style={{border:'2px dashed #334155',borderRadius:'18px',background:'rgba(2,6,23,.4)',padding:'2rem',textAlign:'center',cursor:'pointer',transition:'all .2s'}}>
+                  <div style={{fontSize:'2rem',marginBottom:'.5rem'}}>📖</div>
+                  <div style={{fontSize:'13px',fontWeight:900,color:'white',marginBottom:'.4rem'}}>Adjuntá el Registro Pedagógico</div>
+                  <div style={{fontSize:'11px',color:'#64748b',marginBottom:'1rem'}}>PDF o Word — la IA lo analiza automáticamente</div>
+                  <div style={{display:'flex',justifyContent:'center',gap:'.75rem',flexWrap:'wrap'}}>
+                    <button onClick={e=>{e.stopPropagation();fRefs.registro.current.click();}} style={{background:'#dc2626',color:'white',fontSize:'10px',fontWeight:900,textTransform:'uppercase',padding:'.625rem 1.25rem',borderRadius:'10px',border:'none',cursor:'pointer'}}>📄 PDF</button>
+                    <button onClick={e=>{e.stopPropagation();fRefs.registro.current.click();}} style={{background:'#2563eb',color:'white',fontSize:'10px',fontWeight:900,textTransform:'uppercase',padding:'.625rem 1.25rem',borderRadius:'10px',border:'none',cursor:'pointer'}}>📝 Word</button>
+                  </div>
+                  <input ref={fRefs.registro} type="file" accept=".pdf,.doc,.docx" onChange={handleFile('registro')} style={{display:'none'}}/>
+                </div>
+                <DocList tab="registro"/>
+                <Notes tab="registro"/><AIResult result={aiResults.registro} loading={loading.registro}/>
+              </div>
+            )}
+
+            {/* EXPOSITORES */}
+            {activeTab==='expositores'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div><div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.2em'}}>Sección 5 — Presencial</div>
+                  <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Expositores / Stand</h2></div>
+                  <div style={{background:'#020617',padding:'.75rem 1.25rem',borderRadius:'16px',border:'1px solid #1e293b',textAlign:'center'}}>
+                    <div style={{fontSize:'1.25rem',fontWeight:900,color:'#ef4444'}}>{expCompletos}/6</div>
+                    <div style={{fontSize:'9px',color:'#64748b',fontWeight:700,textTransform:'uppercase'}}>Criterios</div>
+                  </div>
+                </div>
+                {[{key:'Claridad Expositiva',emoji:'🗣️',desc:'¿Se expresa con claridad?'},{key:'Lenguaje Técnico',emoji:'📚',desc:'¿Usa vocabulario adecuado?'},{key:'Manejo de Contenido',emoji:'🧠',desc:'¿Domina el tema?'},{key:'Ubicación de la Información',emoji:'📌',desc:'¿Info bien organizada?'},{key:'Prolijidad',emoji:'✨',desc:'¿Stand ordenado?'},{key:'Información Brindada',emoji:'💬',desc:'¿Responde con solvencia?'}].map(({key,emoji,desc})=>(
+                  <div key={key} style={{background:'rgba(15,23,42,.5)',border:'1px solid #1e293b',borderRadius:'14px',padding:'1rem'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:'.75rem',marginBottom:'.75rem'}}>
+                      <span style={{fontSize:'16px'}}>{emoji}</span>
+                      <div style={{flex:1}}><div style={{fontSize:'11px',fontWeight:900,color:'white',textTransform:'uppercase'}}>{key}</div><div style={{fontSize:'10px',color:'#64748b'}}>{desc}</div></div>
+                      {expScores[key]&&<span style={{fontSize:'9px',fontWeight:900,textTransform:'uppercase',color:EC[expScores[key]],background:EB[expScores[key]],padding:'2px 8px',borderRadius:'999px'}}>{expScores[key]}</span>}
+                    </div>
+                    <div style={{display:'flex',gap:'.5rem'}}>
+                      {ESCALA.map(n=>(
+                        <button key={n} className="escala-btn" onClick={()=>setExpScores(p=>({...p,[key]:p[key]===n?'':n}))}
+                          style={{flex:1,background:expScores[key]===n?EC[n]:'rgba(30,41,59,.8)',color:expScores[key]===n?'white':'#64748b',border:expScores[key]===n?`1px solid ${EC[n]}`:'1px solid #1e293b'}}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <Notes tab="expositores"/><AIBtn tab="expositores"/><AIResult result={aiResults.expositores} loading={loading.expositores}/>
+              </div>
+            )}
+
+            {/* INN */}
+            {activeTab==='inn'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div><div style={{fontSize:'10px',fontWeight:900,color:'#ef4444',textTransform:'uppercase',letterSpacing:'.2em'}}>Sección 6</div>
+                  <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Innovación (INN)</h2></div>
+                  <div style={{background:'#020617',padding:'.75rem 1.5rem',borderRadius:'16px',border:'1px solid #1e293b',textAlign:'center'}}>
+                    <div style={{fontSize:'1.5rem',fontWeight:900,color:'#ef4444'}}>{totalINN}</div>
+                    <div style={{fontSize:'9px',color:'#64748b',fontWeight:700,textTransform:'uppercase'}}>Total Pts</div>
+                  </div>
+                </div>
+                {['Creatividad','Impacto','Contexto','Tecnología','STEAM'].map(f=>(
+                  <div key={f} style={{display:'flex',alignItems:'center',gap:'1rem',background:'rgba(15,23,42,.5)',padding:'1rem',borderRadius:'14px',border:'1px solid #1e293b'}}>
+                    <span style={{fontSize:'11px',fontWeight:900,color:'white',textTransform:'uppercase',flex:1}}>{f}</span>
+                    <input type="number" min="0" max="60" value={innValues[f]||''} onChange={e=>setInnValues(p=>({...p,[f]:e.target.value}))}
+                      style={{width:'80px',background:'#020617',border:'1px solid #1e293b',borderRadius:'8px',padding:'.5rem',color:'#ef4444',textAlign:'center',fontWeight:900,fontSize:'14px',outline:'none'}} placeholder="0-60"/>
+                  </div>
+                ))}
+                <Notes tab="inn"/><AIBtn tab="inn"/><AIResult result={aiResults.inn} loading={loading.inn}/>
+              </div>
+            )}
+
+            {/* DEVOLUCIÓN */}
+            {activeTab==='devolucion'&&(
+              <div style={{display:'flex',flexDirection:'column',gap:'1.5rem'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div>
+                    <div style={{fontSize:'10px',fontWeight:900,color:'#6366f1',textTransform:'uppercase',letterSpacing:'.2em'}}>Cierre de Evaluación</div>
+                    <h2 style={{fontSize:'1.5rem',fontWeight:900,color:'white',textTransform:'uppercase',fontStyle:'italic',margin:'.25rem 0'}}>Devolución Final</h2>
+                    <p style={{fontSize:'11px',color:'#64748b'}}>La IA sintetiza todo lo evaluado en una devolución profesional completa.</p>
+                  </div>
+                  <span style={{fontSize:'2.5rem'}}>🏆</span>
+                </div>
+
+                <button onClick={generarDevolucion} disabled={loading.devolucion}
+                  style={{display:'flex',alignItems:'center',justifyContent:'center',gap:'.75rem',padding:'1rem 2rem',background:'linear-gradient(135deg,#4f46e5,#7c3aed)',color:'white',borderRadius:'16px',border:'none',cursor:'pointer',fontSize:'12px',fontWeight:900,textTransform:'uppercase',letterSpacing:'.1em',boxShadow:'0 8px 25px rgba(79,70,229,.3)'}}>
+                  {loading.devolucion?<Spinner/>:'🤖'}
+                  {loading.devolucion?'Generando devolución...':'Generar Devolución con IA (sintetiza todo)'}
+                </button>
+
+                {aiResults.devolucion&&!aiResults.devolucion.error&&(
+                  <div style={{background:'rgba(99,102,241,.08)',border:'1px solid rgba(99,102,241,.3)',borderRadius:'16px',padding:'1.5rem',display:'flex',flexDirection:'column',gap:'1rem'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <div style={{fontSize:'11px',fontWeight:900,color:'#a5b4fc',textTransform:'uppercase'}}>🤖 Devolución generada por IA</div>
+                      {aiResults.devolucion.puntaje_global&&<Badge label={aiResults.devolucion.puntaje_global}/>}
+                    </div>
+                    {aiResults.devolucion.fortalezas&&(
+                      <div style={{background:'rgba(34,197,94,.08)',borderRadius:'12px',padding:'1rem',borderLeft:'3px solid #22c55e'}}>
+                        <div style={{fontSize:'10px',fontWeight:900,color:'#22c55e',textTransform:'uppercase',marginBottom:'.4rem'}}>📈 Fortalezas</div>
+                        <div style={{fontSize:'12px',color:'#cbd5e1',lineHeight:1.6}}>{aiResults.devolucion.fortalezas}</div>
+                      </div>
+                    )}
+                    {aiResults.devolucion.mejoras&&(
+                      <div style={{background:'rgba(245,158,11,.08)',borderRadius:'12px',padding:'1rem',borderLeft:'3px solid #f59e0b'}}>
+                        <div style={{fontSize:'10px',fontWeight:900,color:'#f59e0b',textTransform:'uppercase',marginBottom:'.4rem'}}>💡 Aspectos a mejorar</div>
+                        <div style={{fontSize:'12px',color:'#cbd5e1',lineHeight:1.6}}>{aiResults.devolucion.mejoras}</div>
+                      </div>
+                    )}
+                    {aiResults.devolucion.conclusion&&(
+                      <div style={{background:'rgba(99,102,241,.1)',borderRadius:'12px',padding:'1rem',borderLeft:'3px solid #6366f1'}}>
+                        <div style={{fontSize:'10px',fontWeight:900,color:'#6366f1',textTransform:'uppercase',marginBottom:'.4rem'}}>📝 Conclusión</div>
+                        <div style={{fontSize:'12px',color:'#cbd5e1',lineHeight:1.6}}>{aiResults.devolucion.conclusion}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {aiResults.devolucion?.error&&<div style={{background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.3)',borderRadius:'14px',padding:'1rem',fontSize:'11px',color:'#f87171'}}>⚠️ {aiResults.devolucion.error}</div>}
+
+                {/* FICHA OFICIAL */}
+                <div style={{borderTop:'1px solid #1e293b',paddingTop:'1.5rem'}}>
+                  <div style={{fontSize:'10px',fontWeight:900,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:'1rem'}}>📋 Ficha Oficial de Devolución</div>
+                  <div id="ficha-imprimible" style={{background:'white',color:'#111',borderRadius:'16px',padding:'2rem',border:'1px solid #1e293b'}}>
+                    <div style={{textAlign:'center',marginBottom:'1rem',borderBottom:'2px solid #111',paddingBottom:'.75rem'}}>
+                      <div style={{fontSize:'11px',color:'#555',marginBottom:'4px'}}>Ministerio de Educación, Cultura, Ciencia y Tecnología — Chaco</div>
+                      <div style={{fontSize:'15px',fontWeight:900,textTransform:'uppercase'}}>Feria de Ciencias</div>
+                      <div style={{fontSize:'13px',fontWeight:700,textTransform:'uppercase'}}>Ficha de Devolución de Trabajos</div>
+                      <div style={{fontSize:'12px',fontWeight:700,marginTop:'4px'}}>Instancia Provincial 2025</div>
+                    </div>
+                    <table style={{width:'100%',borderCollapse:'collapse',marginBottom:'1.25rem',fontSize:'12px'}}>
+                      <tbody>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0',width:'130px'}}>TÍTULO</td><td style={{border:'1px solid #333',padding:'6px 10px'}} colSpan="3"><input className="field-input" value={ficha.titulo} onChange={e=>handleFicha('titulo',e.target.value)} placeholder="Título del proyecto..."/></td></tr>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0'}}>INSTITUCIÓN</td><td style={{border:'1px solid #333',padding:'6px 10px',width:'40%'}}><input className="field-input" value={ficha.institucion} onChange={e=>handleFicha('institucion',e.target.value)} placeholder="Nombre..."/></td><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0',width:'80px'}}>Código</td><td style={{border:'1px solid #333',padding:'6px 10px'}}><input className="field-input" value={ficha.codigo} onChange={e=>handleFicha('codigo',e.target.value)} placeholder="Cód."/></td></tr>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0'}}></td><td style={{border:'1px solid #333',padding:'6px 10px'}}></td><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0'}}>Localidad</td><td style={{border:'1px solid #333',padding:'6px 10px'}}><input className="field-input" value={ficha.localidad} onChange={e=>handleFicha('localidad',e.target.value)} placeholder="Localidad..."/></td></tr>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0'}} rowSpan="2">EXPOSITORES</td><td style={{border:'1px solid #333',padding:'6px 10px'}} colSpan="3"><input className="field-input" value={ficha.expositor1} onChange={e=>handleFicha('expositor1',e.target.value)} placeholder="Apellido, Nombres..."/></td></tr>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px'}} colSpan="3"><input className="field-input" value={ficha.expositor2} onChange={e=>handleFicha('expositor2',e.target.value)} placeholder="Apellido, Nombres..."/></td></tr>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0'}}>DOCENTE</td><td style={{border:'1px solid #333',padding:'6px 10px'}} colSpan="3"><input className="field-input" value={ficha.docente} onChange={e=>handleFicha('docente',e.target.value)} placeholder="Apellido, Nombres..."/></td></tr>
+                        <tr><td style={{border:'1px solid #333',padding:'6px 10px',fontWeight:700,background:'#f0f0f0'}}>FECHA</td><td style={{border:'1px solid #333',padding:'6px 10px'}} colSpan="3"><input className="field-input" type="date" value={ficha.fecha} onChange={e=>handleFicha('fecha',e.target.value)}/></td></tr>
+                      </tbody>
+                    </table>
+                    <div style={{fontWeight:700,fontSize:'12px',textAlign:'center',marginBottom:'.75rem'}}>Fortalezas, comentarios y recomendaciones del trabajo presentado</div>
+                    <table style={{width:'100%',borderCollapse:'collapse',marginBottom:'.75rem',fontSize:'11px'}}>
+                      <thead><tr style={{background:'#d0d0d0'}}><th style={{border:'1px solid #333',padding:'6px 10px',width:'130px',textAlign:'left'}}>Evaluadores</th><th style={{border:'1px solid #333',padding:'6px 10px',textAlign:'left'}}>Nombres</th><th style={{border:'1px solid #333',padding:'6px 10px',textAlign:'left'}}>Apellidos</th></tr></thead>
+                      <tbody>
+                        {[['ev1n','ev1a'],['ev2n','ev2a'],['ev3n','ev3a']].map(([nk,ak],i)=>(
+                          <tr key={i}><td style={{border:'1px solid #333',padding:'6px 10px',background:'#f0f0f0',fontWeight:700}}>Evaluador {i+1}</td><td style={{border:'1px solid #333',padding:'6px 10px'}}><input className="field-input" value={ficha[nk]} onChange={e=>handleFicha(nk,e.target.value)} placeholder="Nombre..."/></td><td style={{border:'1px solid #333',padding:'6px 10px'}}><input className="field-input" value={ficha[ak]} onChange={e=>handleFicha(ak,e.target.value)} placeholder="Apellido..."/></td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{border:'1px solid #333',borderRadius:'4px',padding:'8px'}}>
+                      <textarea value={ficha.comentarios} onChange={e=>handleFicha('comentarios',e.target.value)} placeholder="Fortalezas, comentarios y recomendaciones..."
+                        style={{width:'100%',minHeight:'200px',border:'none',outline:'none',resize:'vertical',fontSize:'12px',color:'#111',lineHeight:'1.8',backgroundImage:'repeating-linear-gradient(transparent,transparent 27px,#ccc 27px,#ccc 28px)',backgroundSize:'100% 28px',padding:'4px'}}/>
+                    </div>
+                    <div style={{marginTop:'1rem',fontSize:'10px',color:'#888',textAlign:'center'}}>Desarrollado por Luis María Espeche · TRILADOS · triladosmate.netlify.app</div>
+                  </div>
+                </div>
+                <div className="no-print" style={{display:'flex',justifyContent:'flex-end',gap:'1rem'}}>
+                  <button onClick={()=>setFicha({titulo:'',institucion:'',codigo:'',localidad:'',expositor1:'',expositor2:'',docente:'',fecha:'',ev1n:'',ev1a:'',ev2n:'',ev2a:'',ev3n:'',ev3a:'',comentarios:''})}
+                    style={{padding:'.875rem 1.5rem',background:'#1e293b',color:'#94a3b8',borderRadius:'12px',fontSize:'10px',fontWeight:900,textTransform:'uppercase',border:'none',cursor:'pointer'}}>🗑️ Limpiar</button>
+                  <button onClick={()=>window.print()}
+                    style={{padding:'.875rem 2rem',background:'#dc2626',color:'white',borderRadius:'12px',fontSize:'10px',fontWeight:900,textTransform:'uppercase',border:'none',cursor:'pointer',boxShadow:'0 8px 25px rgba(220,38,38,.3)'}}>🖨️ Imprimir / PDF</button>
+                </div>
+              </div>
+            )}
+
+            {activeTab!=='devolucion'&&(
+              <div style={{marginTop:'1.5rem',padding:'1rem 1.5rem',background:'#020617',borderRadius:'14px',border:'1px solid #1e293b',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'.5rem'}}>
+                <div style={{display:'flex',gap:'1.5rem',flexWrap:'wrap'}}>
+                  <span style={{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase'}}>Carpeta: <span style={{color:Object.values(carpetaChecks).every(v=>v)?'#22c55e':'#f59e0b'}}>{Object.values(carpetaChecks).filter(v=>v).length}/3</span></span>
+                  <span style={{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase'}}>Stand: <span style={{color:expCompletos===6?'#22c55e':'#f59e0b'}}>{expCompletos}/6</span></span>
+                  <span style={{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase'}}>INN: <span style={{color:'#ef4444'}}>{totalINN} pts</span></span>
+                  <span style={{fontSize:'10px',fontWeight:700,color:'#64748b',textTransform:'uppercase'}}>IA: <span style={{color:'#a5b4fc'}}>{Object.values(aiResults).filter(v=>v&&!v.error).length}/7</span></span>
+                </div>
+                <button onClick={()=>setActiveTab('devolucion')} style={{fontSize:'9px',fontWeight:900,textTransform:'uppercase',color:'#a5b4fc',background:'none',border:'none',cursor:'pointer'}}>Devolución Final ✉️</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <footer style={{borderTop:'1px solid #1e293b',marginTop:'2rem',padding:'1.25rem 2rem',display:'flex',justifyContent:'center',alignItems:'center',gap:'.75rem',background:'rgba(15,23,42,.5)',flexWrap:'wrap'}}>
+        <span style={{fontSize:'10px',color:'#475569',fontWeight:700,textTransform:'uppercase'}}>Desarrollado por</span>
+        <span style={{fontSize:'11px',color:'#94a3b8',fontWeight:900,textTransform:'uppercase'}}>Luis María Espeche</span>
+        <span style={{color:'#334155'}}>|</span>
+        <a href="https://triladosmate.netlify.app" target="_blank" rel="noopener noreferrer" style={{fontSize:'11px',color:'#ef4444',fontWeight:900,textTransform:'uppercase',textDecoration:'none'}}>TRILADOS</a>
+        <span style={{color:'#334155'}}>|</span>
+        <a href="https://instagram.com/triladosmate" target="_blank" rel="noopener noreferrer" style={{fontSize:'10px',color:'#64748b',fontWeight:700,textTransform:'uppercase',textDecoration:'none'}}>@triladosmate</a>
+      </footer>
+    </div>
+  );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>

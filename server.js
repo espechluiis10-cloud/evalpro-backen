@@ -33,12 +33,12 @@ app.post("/analizar", async (req, res) => {
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
+      `https://evalpro-backet.ondender.com/analizar`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts }],
+          contents: [{ role: "user", parts: parts }],
           generationConfig: { maxOutputTokens: 1500, temperature: 0.3 }
         }),
       }

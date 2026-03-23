@@ -72,8 +72,8 @@ const callClaude = async (messages, maxTokens = 1500) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.3 }
+        parts: parts 
+  
       })
     }
   );

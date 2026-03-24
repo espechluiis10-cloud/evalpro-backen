@@ -1,7 +1,6 @@
 {
   "name": "evalpro-backen",
   "version": "1.0.0",
-  "description": "Backend para evaluar proyectos de feria de ciencias",
   "main": "servidor.js",
   "scripts": {
     "start": "node servidor.js"
